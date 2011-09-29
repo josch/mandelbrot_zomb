@@ -1,58 +1,40 @@
 package deepZoom;
 
-import java.awt.event.InputEvent;
-import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
 import java.io.IOException;
 
-import deepZoom.calculator.Calculator;
-import deepZoom.calculator.ParallelCalculator;
 import deepZoom.colorings.Coloring;
 import deepZoom.colorings.SmoothIterationsColoringBad;
 import deepZoom.fractals.Fractal;
 import deepZoom.fractals.Mandel;
 import deepZoom.fractals.MandelPrecision;
 import deepZoom.parameters.ZoomAnimation;
-import deepZoom.renderer.Layer;
 import deepZoom.renderer.Scene;
-import deepZoom.schedulers.AngularScheduler;
-import deepZoom.schedulers.CRTScheduler;
-import deepZoom.schedulers.ClockScheduler;
-import deepZoom.schedulers.DitherScheduler;
-import deepZoom.schedulers.FlowerScheduler;
-import deepZoom.schedulers.ModScheduler;
-import deepZoom.schedulers.PythagorasScheduler;
-import deepZoom.schedulers.RadialScheduler;
-import deepZoom.schedulers.RandomScheduler;
-import deepZoom.schedulers.Scheduler;
-import deepZoom.schedulers.SimpleScheduler;
-import deepZoom.schedulers.SpiralScheduler;
-import deepZoom.schedulers.SplitScheduler;
-import deepZoom.schedulers.SquareSpiralScheduler;
-import deepZoom.schedulers.XorScheduler;
 import deepZoom.viewports.Viewport;
 
 import digisoft.custom.NumberFunctions;
 import digisoft.custom.awt.Color3f;
-import digisoft.custom.swing.ImageFunctions;
-import digisoft.custom.swing.RefreshListener;
-import digisoft.custom.swing.RefreshThread;
 import digisoft.custom.swing.gradient.Gradient;
 import digisoft.custom.swing.gradient.OpaqueGradient;
-import digisoft.custom.swing.window.PixelWindow;
 import digisoft.custom.util.geom.DoubleDouble;
+
+import java.awt.image.BufferedImage;
+import java.io.BufferedOutputStream;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.io.File;
+
+import javax.imageio.ImageIO;
 
 /**
  * @author Zom-B
  * @since 1.0
  * @see date 2006/10/20
  */
-public class MandelAnimator implements RefreshListener, Calculator, MouseListener {
+public class MandelAnimator {
 
-    private static final String SAVEPATH = "C:/Animation golden/";
-    private static final int WIDTH = (int) (1024);
-    private static final int HEIGHT = (int) (576);
+    private static final String SAVEPATH = "./";
+    private static final int WIDTH = (int) (1920);
+    private static final int HEIGHT = (int) (1080);
     private static int FRAME_START = 1;
     private static final int FRAME_END = 3600;
     private static final int FRAME_STEP = 1;
@@ -71,21 +53,19 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
         new MandelAnimator();
     }
     private static final int NUM_CPUS = Runtime.getRuntime().availableProcessors();
-    private PixelWindow aaWindow = new PixelWindow(10, 10, MandelAnimator.WIDTH, MandelAnimator.HEIGHT);
-    private PixelWindow iterWindow = new PixelWindow(10, 10, MandelAnimator.WIDTH, MandelAnimator.HEIGHT);
-    private PixelWindow fractalWindow = new PixelWindow(10, 10, MandelAnimator.WIDTH, MandelAnimator.HEIGHT);
     private Viewport viewport = new Viewport();
-    private Layer layer = new Layer();
     private ZoomAnimation animation = new ZoomAnimation();
     private Fractal fractal = new Mandel();
     private Coloring coloring = new SmoothIterationsColoringBad(makeGradient());
-    private Scheduler[] schedulers = {new SpiralScheduler(10)};
-    private int scheduler;
     private Scene scene = new Scene();
     private int frameNr;
     private boolean antialiasStep = false;
     private long runTime;
     private long frameTime;
+
+    private int[] fractal_pixels;
+    private int[] iter_pixels;
+    private int[] aa_pixels;
 
     public MandelAnimator() {
         File dirFile = new File(SAVEPATH);
@@ -102,10 +82,6 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
         }
         MandelAnimator.FRAME_START = newSave;
 
-        fractalWindow.addMouseListener(this);
-        iterWindow.setTitle("Iter");
-        aaWindow.setTitle("AA");
-
         animation.setWidth(MandelAnimator.WIDTH);
         animation.setNumFrames(MandelAnimator.NUM_FRAMES);
         animation.setCenterX(centerX);
@@ -119,27 +95,26 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
         fractal.setParameters(animation);
         coloring.setParameters(animation);
 
-        for (Scheduler s : schedulers) {
-            s.setViewport(viewport);
-        }
+        fractal_pixels = new int[MandelAnimator.WIDTH*MandelAnimator.HEIGHT];
+        iter_pixels = new int[MandelAnimator.WIDTH*MandelAnimator.HEIGHT];
+        aa_pixels = new int[MandelAnimator.WIDTH*MandelAnimator.HEIGHT];
 
         scene.setViewport(viewport);
-        scene.setColorPixels(fractalWindow.pixels);
-        scene.setIterMap(iterWindow.pixels);
-        scene.setEdgeMap(aaWindow.pixels);
+        scene.setColorPixels(fractal_pixels);
+        scene.setIterMap(iter_pixels);
+        scene.setEdgeMap(aa_pixels);
         scene.setNumCPUs(MandelAnimator.NUM_CPUS);
-
-        {
-            layer.setFractal(fractal);
-            layer.setColoring(coloring);
-            scene.addLayer(layer);
-        }
+        scene.setFractal(fractal);
+        scene.setColoring(coloring);
 
         frameNr = MandelAnimator.FRAME_START;
 
         runTime = frameTime = System.currentTimeMillis();
-        ParallelCalculator.createCalculators(this, MandelAnimator.NUM_CPUS);
-        new RefreshThread(this, 30).start();
+        while (true) {
+            prepareCalculation();
+            calculate(0);
+            calculationCompleted();
+        }
     }
 
     public static Gradient makeGradient() {
@@ -202,8 +177,13 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
 
     private void saveFrame() {
         try {
-            ImageFunctions.savePNG(MandelAnimator.SAVEPATH + NumberFunctions.toStringFixedLength(frameNr, 4) + ".png", fractalWindow.pixels,
-                    MandelAnimator.WIDTH, MandelAnimator.HEIGHT);
+            BufferedImage saveImage = new BufferedImage(MandelAnimator.WIDTH, MandelAnimator.HEIGHT, BufferedImage.TYPE_INT_RGB);
+            saveImage.setRGB(0, 0, MandelAnimator.WIDTH, MandelAnimator.HEIGHT, fractal_pixels, 0, MandelAnimator.WIDTH);
+
+            OutputStream out = new BufferedOutputStream(new FileOutputStream(MandelAnimator.SAVEPATH + NumberFunctions.toStringFixedLength(frameNr, 4) + ".png"));
+            ImageIO.write(saveImage, "png", out);
+
+            out.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -211,9 +191,6 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
 
     private void destroyImage() {
         System.gc();
-        fractalWindow.clear(0);
-        iterWindow.clear(0);
-        aaWindow.clear(0);
     }
 
     private void nextFrame() {
@@ -230,14 +207,8 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
         }
     }
 
-    @Override
     public void prepareCalculation() {
-        scheduler = NumberFunctions.RND.nextInt(schedulers.length);
-        scene.setScheduler(schedulers[scheduler]);
-
         if (!antialiasStep) {
-            fractalWindow.setTitle(Integer.toString(frameNr) + " First pass");
-
             animation.setFrame(frameNr);
 
             System.out.println("Rough: " + frameNr + " magn=" + animation.getMagn() + " maxiter=" + animation.getMaxiter());
@@ -245,8 +216,6 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
             destroyImage();
             scene.initFrame();
         } else {
-            fractalWindow.setTitle(Integer.toString(frameNr) + " Antialiasing");
-
             animation.setFrame(frameNr);
             animation.setMaxiter(animation.getMaxiter() << 2);
 
@@ -254,11 +223,8 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
 
             scene.calcAntialiasMask();
         }
-
-        schedulers[scheduler].init();
     }
 
-    @Override
     public void calculate(int cpu) {
         if (!antialiasStep) {
             scene.render(cpu);
@@ -267,15 +233,12 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
         }
     }
 
-    @Override
     public void calculationCompleted() {
         if (!antialiasStep && MandelAnimator.DO_ANTIALIAS) {
             antialiasStep = true;
         } else {
             antialiasStep = false;
 
-            fractalWindow.repaintNow();
-            iterWindow.repaintNow();
             saveFrame();
 
             long time = System.currentTimeMillis();
@@ -290,45 +253,5 @@ public class MandelAnimator implements RefreshListener, Calculator, MouseListene
 
             nextFrame();
         }
-    }
-
-    @Override
-    public void refreshing() {
-        fractalWindow.repaintNow();
-        iterWindow.repaintNow();
-        aaWindow.repaintNow();
-        if (antialiasStep) {
-            aaWindow.setTitle("AA " + (int) (schedulers[scheduler].getProgress() * 1000) / 10f + "%");
-        } else {
-            iterWindow.setTitle("Iter " + (int) (schedulers[scheduler].getProgress() * 1000) / 10f + "%");
-        }
-    }
-
-    @Override
-    public void mouseClicked(MouseEvent e) {
-    }
-
-    @Override
-    public void mouseEntered(MouseEvent e) {
-    }
-
-    @Override
-    public void mouseExited(MouseEvent e) {
-    }
-
-    @Override
-    public void mousePressed(MouseEvent e) {
-        if ((e.getModifiers() & InputEvent.BUTTON1_MASK) != 0) {
-            centerX = viewport.getPX(e.getX(), e.getY());
-            centerY = viewport.getPY(e.getX(), e.getY());
-
-            System.out.println("/tprivate DoubleDouble/t/t/tcenterX/t/t/t= new DoubleDouble(" + centerX.hi + ", " + centerX.lo + ");");
-            System.out.println("/tprivate DoubleDouble/t/t/tcenterY/t/t/t= new DoubleDouble(" + centerY.hi + ", " + centerY.lo + ");");
-        } else if ((e.getModifiers() & InputEvent.BUTTON3_MASK) != 0) {
-        }
-    }
-
-    @Override
-    public void mouseReleased(MouseEvent e) {
     }
 }

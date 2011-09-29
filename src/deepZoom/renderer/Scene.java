@@ -1,9 +1,11 @@
 package deepZoom.renderer;
 
-import deepZoom.schedulers.PriorityPoint;
-import deepZoom.schedulers.Scheduler;
+import java.awt.Point;
+
 import deepZoom.viewports.Viewport;
 
+import deepZoom.colorings.Coloring;
+import deepZoom.fractals.Fractal;
 import digisoft.custom.awt.Color3f;
 import digisoft.custom.awt.Color3fConst;
 
@@ -15,24 +17,27 @@ import digisoft.custom.awt.Color3fConst;
 public class Scene {
 
     private Viewport viewport;
-    private Scheduler scheduler;
     private int[] pixels;
     private int[] iterMap;
     private int[] edgeMap;
     private Color3f[] colors;
     private int[] mask;
-    // Multiple layer support unfinished!
-    private Layer layer;
+    private Fractal fractal;
+    private Coloring coloring;
     private int width;
     private int height;
     private int area = -1;
 
-    public void setViewport(Viewport viewport) {
-        this.viewport = viewport;
+    public void setFractal(Fractal fractal) {
+        this.fractal = fractal;
     }
 
-    public void setScheduler(Scheduler scheduler) {
-        this.scheduler = scheduler;
+    public void setColoring(Coloring coloring) {
+        this.coloring = coloring;
+    }
+
+    public void setViewport(Viewport viewport) {
+        this.viewport = viewport;
     }
 
     public void setColorPixels(int[] pixels) {
@@ -47,13 +52,10 @@ public class Scene {
         this.edgeMap = edgeMap;
     }
 
-    public void addLayer(Layer layer) {
-        this.layer = layer;
-    }
-
     public void initFrame() {
         viewport.initParameters();
-        layer.initFrame();
+        fractal.initFrame();
+        coloring.initParameters();
 
         width = viewport.width;
         height = viewport.height;
@@ -74,11 +76,11 @@ public class Scene {
         }
     }
 
-    public void render(PointInfo pointInfo, PriorityPoint point) {
+    public void render(PointInfo pointInfo, Point point) {
         int p = point.x + point.y * width;
 
         viewport.getPoint(point.x, point.y, pointInfo);
-        layer.fractal.calcPoint(pointInfo);
+        fractal.calcPoint(pointInfo);
         int iter = (int) pointInfo.lastIter;
         boolean inside = pointInfo.inside;
 
@@ -86,7 +88,7 @@ public class Scene {
         edgeMap[p] = inside ? 0 : iter;
 
         if (!inside) {
-            colors[p].addSelf(layer.coloring.getColor(pointInfo));
+            colors[p].addSelf(coloring.getColor(pointInfo));
         }
 
         pixels[p] = colors[p].getRGB();
@@ -150,7 +152,7 @@ public class Scene {
         }
     }
 
-    public void renderAntialias(PointInfo pointInfo, PriorityPoint point) {
+    public void renderAntialias(PointInfo pointInfo, Point point) {
         int p = point.x + point.y * width;
 
         if (mask[p] != 0) {
@@ -166,7 +168,7 @@ public class Scene {
         }
     }
 
-    private void calcAntialiasPixel(PointInfo pointInfo, int p, PriorityPoint point) {
+    private void calcAntialiasPixel(PointInfo pointInfo, int p, Point point) {
         int reach = pointInfo.antialiasReach;
         double factor = 1.0 / pointInfo.antialiasFactor;
         for (int x = -reach; x <= reach; x++) {
@@ -176,11 +178,11 @@ public class Scene {
 
                 if ((x | y) != 0) {
                     viewport.getPoint(point.x + dx, point.y + dy, pointInfo);
-                    layer.fractal.calcPoint(pointInfo);
+                    fractal.calcPoint(pointInfo);
                     boolean inside = pointInfo.inside;
 
                     if (!inside) {
-                        colors[p].addSelf(layer.coloring.getColor(pointInfo));
+                        colors[p].addSelf(coloring.getColor(pointInfo));
                     }
                 }
             }
@@ -198,24 +200,20 @@ public class Scene {
     }
 
     public void render(int cpu) {
-        while (true) {
-            PriorityPoint point = scheduler.poll();
-            if (point == null) {
-                return;
+        for (int y = 0; y < height; y++) {
+            int dy = y * width;
+            for (int x = 0; x < width; x++) {
+                this.render(pointInfos[cpu], new Point(x, y));
             }
-
-            this.render(pointInfos[cpu], point);
         }
     }
 
     public void renderAntialias(int cpu) {
-        while (true) {
-            PriorityPoint point = scheduler.poll();
-            if (point == null) {
-                return;
+        for (int y = 0; y < height; y++) {
+            int dy = y * width;
+            for (int x = 0; x < width; x++) {
+                this.renderAntialias(pointInfos[cpu], new Point(x, y));
             }
-
-            this.renderAntialias(pointInfos[cpu], point);
         }
     }
 }
