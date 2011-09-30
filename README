@@ -1,0 +1,12 @@
+to run it, run:
+
+ant -Djavac.includes="" run
+
+to modify parameters, edit:
+
+src/deepZoom/MandelAnimator.java
+
+the frames will be output in the current working directory.
+you can combine them into a video using ffmpeg:
+
+ffmpeg -i %04d.png -vcodec libx264 -vpre veryslow -crf 19 -vf "scale=1024:-1" out.mp4
